@@ -1,5 +1,5 @@
 import sys
-from time import time as unix_timestamp
+from time import time as unix_timestamp, sleep
 import re
 import boto3
 
@@ -112,6 +112,43 @@ def clone_asg(client, asg, name, lc_name):
     )['AutoScalingGroups'][0]
 
 
+def delete_asg(client, asg):
+    """
+    Scale down and then delete the ASG.
+
+    """
+    asg_client.update_auto_scaling_group(
+        AutoScalingGroupName=asg['AutoScalingGroupName'],
+        MinSize=0,
+        MaxSize=0,
+        DesiredCapacity=0,
+    )
+    asg_client.resume_processes(
+        AutoScalingGroupName=asg['AutoScalingGroupName'],
+    )
+
+    # Poll for finished terminating.
+    for i in range(61):
+        if i == 60:
+            raise Exception('Polled 60 times, giving up.')
+        sleep(10)
+        _asg = asg_client.describe_auto_scaling_groups(
+            AutoScalingGroupNames=[asg['AutoScalingGroupName']],
+        )['AutoScalingGroups'][0]
+        # Check instance states
+        has_instances = False
+        for instance in _asg['Instances']:
+            if instance['LifecycleState'] != 'Terminated':
+                has_instances = True
+                break
+        if not has_instances:
+            break
+
+    asg_client.delete_auto_scaling_group(
+        AutoScalingGroupName=asg['AutoScalingGroupName'],
+    )
+
+
 if __name__ == '__main__':
     asg_client = boto3.client('autoscaling')
     asg_name_base = sys.argv[1]
@@ -126,6 +163,12 @@ if __name__ == '__main__':
     lc = asg_client.describe_launch_configurations(
         LaunchConfigurationNames=[asg['LaunchConfigurationName']],
     )['LaunchConfigurations'][0]
+
+    print('Suspending ASG...')
+    asg_client.suspend_processes(
+        AutoScalingGroupName=asg['AutoScalingGroupName'],
+    )
+
     print('Creating new launch configuration...')
     new_lc = clone_lc(asg_client, lc, asg_new_name, sys.argv[2])
     print('Creating new ASG...')
@@ -134,4 +177,13 @@ if __name__ == '__main__':
         asg,
         asg_new_name,
         new_lc['LaunchConfigurationName'],
+    )
+
+    # TODO:  Attach new ASG, wait for health checks, detach old ASG.
+
+    print('Scaling down and deleting old ASG...')
+    delete_asg(asg_client, asg)
+    print('Deleting old LC...')
+    asg_client.delete_launch_configuration(
+        LaunchConfigurationName=asg['LaunchConfigurationName'],
     )
