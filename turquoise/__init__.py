@@ -135,7 +135,6 @@ def wait_for_instances(client, asg, desired_state=None, desired_health=None,
         # Check instance states
         all_matching = True
         for instance in _asg['Instances']:
-            print(instance['LifecycleState'], instance['HealthStatus'])
             if(
                     desired_state is not None and
                     instance['LifecycleState'] != desired_state
