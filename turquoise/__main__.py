@@ -112,6 +112,46 @@ def clone_asg(client, asg, name, lc_name):
     )['AutoScalingGroups'][0]
 
 
+def wait_for_instances(client, asg, desired_state=None, desired_health=None,
+                       desired_count=None):
+    """
+    Poll until all the instances in the ASG match the desired state and health.
+
+    """
+    for i in range(61):
+        if i == 60:
+            raise Exception('Tried for 5 minutes, giving up.')
+        sleep(10)
+        _asg = asg_client.describe_auto_scaling_groups(
+            AutoScalingGroupNames=[asg['AutoScalingGroupName']],
+        )['AutoScalingGroups'][0]
+
+        if(
+                desired_count is not None
+                and len(_asg['Instances']) < desired_count
+        ):
+            continue
+
+        # Check instance states
+        all_matching = True
+        for instance in _asg['Instances']:
+            print(instance['LifecycleState'], instance['HealthStatus'])
+            if(
+                    desired_state is not None
+                    and instance['LifecycleState'] != desired_state
+            ):
+                all_matching = False
+                break
+            if(
+                    desired_health is not None
+                    and instance['HealthStatus'] != desired_health
+            ):
+                all_matching = False
+                break
+        if all_matching:
+            break
+
+
 def delete_asg(client, asg):
     """
     Scale down and then delete the ASG.
@@ -127,22 +167,7 @@ def delete_asg(client, asg):
         AutoScalingGroupName=asg['AutoScalingGroupName'],
     )
 
-    # Poll for finished terminating.
-    for i in range(61):
-        if i == 60:
-            raise Exception('Polled 60 times, giving up.')
-        sleep(10)
-        _asg = asg_client.describe_auto_scaling_groups(
-            AutoScalingGroupNames=[asg['AutoScalingGroupName']],
-        )['AutoScalingGroups'][0]
-        # Check instance states
-        has_instances = False
-        for instance in _asg['Instances']:
-            if instance['LifecycleState'] != 'Terminated':
-                has_instances = True
-                break
-        if not has_instances:
-            break
+    wait_for_instances(client, asg, 'Terminated')
 
     asg_client.delete_auto_scaling_group(
         AutoScalingGroupName=asg['AutoScalingGroupName'],
@@ -179,7 +204,10 @@ if __name__ == '__main__':
         new_lc['LaunchConfigurationName'],
     )
 
-    # TODO:  Attach new ASG, wait for health checks, detach old ASG.
+    wait_for_instances(
+        asg_client, new_asg, 'InService', 'Healthy',
+        new_asg['DesiredCapacity'],
+    )
 
     print('Scaling down and deleting old ASG...')
     delete_asg(asg_client, asg)
