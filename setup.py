@@ -4,5 +4,7 @@ setup(
     name='turquoise',
     version='0.1.0',
     packages=find_packages(),
-    entry_points={},
+    entry_points={
+        'console_scripts': ['turquoise=turquoise:main'],
+    },
 )
