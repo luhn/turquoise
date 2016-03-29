@@ -66,7 +66,7 @@ def clone_lc(client, lc, name, image_id):
         ImageId=image_id,
         **params
     )
-    return asg_client.describe_launch_configurations(
+    return client.describe_launch_configurations(
         LaunchConfigurationNames=[name],
     )['LaunchConfigurations'][0]
 
@@ -122,13 +122,13 @@ def wait_for_instances(client, asg, desired_state=None, desired_health=None,
         if i == 60:
             raise Exception('Tried for 5 minutes, giving up.')
         sleep(10)
-        _asg = asg_client.describe_auto_scaling_groups(
+        _asg = client.describe_auto_scaling_groups(
             AutoScalingGroupNames=[asg['AutoScalingGroupName']],
         )['AutoScalingGroups'][0]
 
         if(
-                desired_count is not None
-                and len(_asg['Instances']) < desired_count
+                desired_count is not None and
+                len(_asg['Instances']) < desired_count
         ):
             continue
 
@@ -137,18 +137,38 @@ def wait_for_instances(client, asg, desired_state=None, desired_health=None,
         for instance in _asg['Instances']:
             print(instance['LifecycleState'], instance['HealthStatus'])
             if(
-                    desired_state is not None
-                    and instance['LifecycleState'] != desired_state
+                    desired_state is not None and
+                    instance['LifecycleState'] != desired_state
             ):
                 all_matching = False
                 break
             if(
-                    desired_health is not None
-                    and instance['HealthStatus'] != desired_health
+                    desired_health is not None and
+                    instance['HealthStatus'] != desired_health
             ):
                 all_matching = False
                 break
         if all_matching:
+            break
+
+
+def wait_for_lb_instances(client, lb_name):
+    for i in range(61):
+        if i == 60:
+            raise Exception('Tried for 5 minutes, giving up.')
+
+        if i != 0:
+            sleep(10)
+
+        response = client.describe_instance_health(
+            LoadBalancerName=lb_name,
+        )
+        all_healthy = True
+        for instance in response['InstanceStates']:
+            if instance['State'] != 'InService':
+                all_healthy = False
+                break
+        if all_healthy:
             break
 
 
@@ -157,25 +177,31 @@ def delete_asg(client, asg):
     Scale down and then delete the ASG.
 
     """
-    asg_client.update_auto_scaling_group(
+    if len(asg['LoadBalancerNames']) > 0:
+        client.detach_load_balancers(
+            AutoScalingGroupName=asg['AutoScalingGroupName'],
+            LoadBalancerNames=asg['LoadBalancerNames'],
+        )
+    client.update_auto_scaling_group(
         AutoScalingGroupName=asg['AutoScalingGroupName'],
         MinSize=0,
         MaxSize=0,
         DesiredCapacity=0,
     )
-    asg_client.resume_processes(
+    client.resume_processes(
         AutoScalingGroupName=asg['AutoScalingGroupName'],
     )
 
     wait_for_instances(client, asg, 'Terminated')
 
-    asg_client.delete_auto_scaling_group(
+    client.delete_auto_scaling_group(
         AutoScalingGroupName=asg['AutoScalingGroupName'],
     )
 
 
 if __name__ == '__main__':
     asg_client = boto3.client('autoscaling')
+    elb_client = boto3.client('elb')
     asg_name_base = sys.argv[1]
     asg_new_name = asg_name_base + '-' + str(int(unix_timestamp()))
 
@@ -204,10 +230,24 @@ if __name__ == '__main__':
         new_lc['LaunchConfigurationName'],
     )
 
+    has_lbs = len(asg['LoadBalancerNames']) > 0
+    if has_lbs:
+        asg_client.attach_load_balancers(
+            AutoScalingGroupName=asg_new_name,
+            LoadBalancerNames=asg['LoadBalancerNames'],
+        )
+
+    print('Waiting for instances to boot...')
     wait_for_instances(
         asg_client, new_asg, 'InService', 'Healthy',
         new_asg['DesiredCapacity'],
     )
+
+    if has_lbs:
+        # Wait for LB health checks
+        print('Waiting for ELB health checks...')
+        for lb_name in asg['LoadBalancerNames']:
+            wait_for_lb_instances(elb_client, lb_name)
 
     print('Scaling down and deleting old ASG...')
     delete_asg(asg_client, asg)
