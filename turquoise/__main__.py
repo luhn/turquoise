@@ -90,11 +90,18 @@ def clone_asg(client, asg, name, lc_name):
         'VPCZoneIdentifier',
         'TerminationPolicies',
         'NewInstancesProtectedFromScaleIn',
-        # 'Tags',  Todo:  support this.
     ]
     params = {
         key: asg[key] for key in PARAMS_TO_CLONE if key in asg
     }
+    params['Tags'] = [{
+        'ResourceId': name,
+        'ResourceType': 'auto-scaling-group',
+        'Key': tag['Key'],
+        'Value': tag['Value'],
+        'PropagateAtLaunch': tag['PropagateAtLaunch'],
+    } for tag in asg['Tags']]
+
     client.create_auto_scaling_group(
         AutoScalingGroupName=name,
         LaunchConfigurationName=lc_name,
