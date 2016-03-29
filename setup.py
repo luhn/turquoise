@@ -11,6 +11,9 @@ setup(
     author='Theron Luhn',
     author_email='theron@luhn.com',
     url='https://github.com/luhn/turquoise',
+    install_requires=[
+        'boto3>=1.3.0,<2.0.0',
+    ],
     packages=find_packages(),
     entry_points={
         'console_scripts': ['turquoise=turquoise:main'],
