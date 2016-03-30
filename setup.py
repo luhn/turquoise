@@ -6,8 +6,9 @@ setup(
     version='0.1.0',
     description=(
         'A utility for performing blue-green deployments on AWS Auto Scaling '
-        + 'Groups'
+        + 'Groups.'
     ),
+    long_description=open('README.rst').read(),
     author='Theron Luhn',
     author_email='theron@luhn.com',
     url='https://github.com/luhn/turquoise',
